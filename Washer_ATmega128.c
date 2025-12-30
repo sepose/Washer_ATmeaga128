@@ -1,227 +1,266 @@
 #include <avr/io.h>
-#include <avr/interrupt.h>    
-#define F_CPU 8000000UL    
-#include <util/delay.h>   
+#include <avr/interrupt.h>
+#define F_CPU 8000000UL
+#include <util/delay.h>
 
+char led_pattern = 0b10000000;
+volatile unsigned int timer0_count, stop_interrupt, timer2_count, timer_save, seconds;
+int is_enabled = 0;
+int load_switch = 0;
+int load_save = 0b11101000;
+unsigned int adc_result = 0xFFFF, adc_threshold = 0x0100;
 
-char led = 0b10000000;
-volatile unsigned int howmuch,StopInterrupt,howmuch1,TimerSave,Seconds;
-int Close = 0;
-int loadswitch = 0;
-int loadsave = 0b11101000;
-unsigned int result = 0xFFFF, th = 0x0100;
-
-void mode1(void) {
-
-   TimerMoter(2,1);
-   TimerMoter(1,0);
-   TimerMoter(2,1);   
-   TimerMoter(1,0);
-   stop();
+void mode1(void)
+{
+    TimerMoter(2,1);
+    TimerMoter(1,0);
+    TimerMoter(2,1);
+    TimerMoter(1,0);
+    stop();
 }
 
-void mode2(void) {
-	
-	TimerMoter(10,1); 
-	stop();
-}
-void mode3(void) {
-	
-	TimerMoter(10,0); 
-	stop();
+void mode2(void)
+{
+    TimerMoter(10,1);
+    stop();
 }
 
-void stop(void) { 
-	
-	PORTB = (0<<PB0) | (0<<PB1);  
-	TIMSK &= 0xFE; 
-	PORTE = 0b11101000; 
+void mode3(void)
+{
+    TimerMoter(10,0);
+    stop();
 }
 
-
-void loadingled(void) {
-
-   if(!loadswitch) {
-
-      PORTE = ((PORTE & 0b00001111) | led);
-      led >>= 1;
-      if(led == 0b00010000) {loadswitch = 1;}
-   }
-   else{
-
-      PORTE = ((PORTE & 0b00001111) | led);
-      led <<= 1;
-      if(led == 0b10000000) {loadswitch = 0;}
-   }
+void stop(void)
+{
+    PORTB = (0<<PB0) | (0<<PB1);
+    TIMSK &= 0xFE;
+    PORTE = 0b11101000;
 }
 
-void Init_Timer0(void) {
-
-   TIMSK|=0x01;
-   TCCR0 = 0x02; 
-   TCNT0 = 0x38;
+void loadingled(void)
+{
+    if(!load_switch)
+    {
+        PORTE = ((PORTE & 0b00001111) | led_pattern);
+        led_pattern >>= 1;
+        if(led_pattern == 0b00010000)
+        {
+            load_switch = 1;
+        }
+    }
+    else
+    {
+        PORTE = ((PORTE & 0b00001111) | led_pattern);
+        led_pattern <<= 1;
+        if(led_pattern == 0b10000000)
+        {
+            load_switch = 0;
+        }
+    }
 }
 
-void Init_Timer2(void){
-
-   TIMSK|=0x40;
-   TCCR2 = 0x02; 
-   TCNT2 = 0x38;
+void Init_Timer0(void)
+{
+    TIMSK |= 0x01;
+    TCCR0 = 0x02;
+    TCNT0 = 0x38;
 }
 
-ISR(TIMER0_OVF_vect){
-	
-   TCNT0 = 0x38; 
-   howmuch++;
-	
-   if(howmuch >= 5000) {
-	   
-      howmuch = 0;
-      loadingled();
-   }
+void Init_Timer2(void)
+{
+    TIMSK |= 0x40;
+    TCCR2 = 0x02;
+    TCNT2 = 0x38;
+}
+
+ISR(TIMER0_OVF_vect)
+{
+    TCNT0 = 0x38;
+    timer0_count++;
+
+    if(timer0_count >= 5000)
+    {
+        timer0_count = 0;
+        loadingled();
+    }
 }
 
 ISR(TIMER2_OVF_vect)
 {
-   result = ADC;
-   if(result < th) {Close = 0; stop(); stopsign();}
-     
-   if(StopInterrupt == 0){
+    adc_result = ADC;
 
-      TCNT2 = 0x38; 
-      howmuch1++;
-   }
-   if(howmuch1 >= 10000){
-	   
-      howmuch1 = 0;
-      Seconds++;
-   }
+    if(adc_result < adc_threshold)
+    {
+        is_enabled = 0;
+        stop();
+        stopsign();
+    }
+
+    if(stop_interrupt == 0)
+    {
+        TCNT2 = 0x38;
+        timer2_count++;
+    }
+
+    if(timer2_count >= 10000)
+    {
+        timer2_count = 0;
+        seconds++;
+    }
 }
 
-ISR(INT3_vect) {
-	
-   if(StopInterrupt == 1){
-	   
-      howmuch1 = TimerSave;
-      StopInterrupt=0;
-   }
-   else if(StopInterrupt == 0){
-	   
-      TimerSave = howmuch1;
-      StopInterrupt= 1;
-      PORTE &= 240; PORTE |= (8 << PE0);
-   }
-}
-
-void TimerMoter(int Alarm,int MoterDirection)
+ISR(INT3_vect)
 {
-   Seconds = 0;
-   howmuch1= 0;
-   
-   while(Close) {
-
-      if(StopInterrupt == 0) {
-	      
-	      TIMSK |= 0x41; 
-	      PORTB = ((MoterDirection&&1)<<PB0) | (!(MoterDirection&&1)<<PB1);
-      }
-      else {stop();}
-      if(Seconds >= Alarm) break;
-   }
-   PORTB = ((0<<PB0) | (0<<PB1));
+    if(stop_interrupt == 1)
+    {
+        timer2_count = timer_save;
+        stop_interrupt = 0;
+    }
+    else if(stop_interrupt == 0)
+    {
+        timer_save = timer2_count;
+        stop_interrupt = 1;
+        PORTE &= 240;
+        PORTE |= (8 << PE0);
+    }
 }
 
-void stopsign(){ 
+void TimerMoter(int alarm_time, int motor_direction)
+{
+    seconds = 0;
+    timer2_count = 0;
 
-   PORTA = 0x6D;
-   PORTC = ~0x01;
-   _delay_ms(1);
+    while(is_enabled)
+    {
+        if(stop_interrupt == 0)
+        {
+            TIMSK |= 0x41;
+            PORTB = ((motor_direction && 1) << PB0) | (!(motor_direction && 1) << PB1);
+        }
+        else
+        {
+            stop();
+        }
 
-   PORTA = 0b01111000;
-   PORTC = ~0x02;
-   _delay_ms(1);
+        if(seconds >= alarm_time)
+        {
+            break;
+        }
+    }
 
-   PORTA = 0x3F;
-   PORTC = ~0x04;
-   _delay_ms(1);
-
-   PORTA = 0b01110011;
-   PORTC = ~0x08;
-   _delay_ms(1);
+    PORTB = (0<<PB0) | (0<<PB1);
 }
 
-int main(void) {
+void stopsign()
+{
+    PORTA = 0x6D;
+    PORTC = ~0x01;
+    _delay_ms(1);
 
-   cli(); //인터럽트 비활성화
+    PORTA = 0b01111000;
+    PORTC = ~0x02;
+    _delay_ms(1);
 
-   DDRB=0x03;    // 포트B의 8비트 전체를 출력으로 설정합니다.
-   DDRC = 0b00001111;   // 원래 버튼 포트 C
-   DDRE = 0xFF;
+    PORTA = 0x3F;
+    PORTC = ~0x04;
+    _delay_ms(1);
 
-   DDRA = 0xFF;
+    PORTA = 0b01110011;
+    PORTC = ~0x08;
+    _delay_ms(1);
+}
 
-   PORTE = 0b10000000;
-   Init_Timer0();
-   Init_Timer2();
+int main(void)
+{
+    cli();
 
-   howmuch = 0;
-   howmuch1 = 0;
+    DDRB = 0x03;
+    DDRC = 0b00001111;
+    DDRE = 0xFF;
+    DDRA = 0xFF;
 
-   StopInterrupt = 0;
-   Seconds = 0;
+    PORTE = 0b10000000;
 
-   PORTE = 0b00001000;
-   PORTD = 0;
-   EICRA = 0b11000000; //int3 request in rising edge
-   EIMSK = 0x08;         // int3 인터럽트 허용 
+    Init_Timer0();
+    Init_Timer2();
 
-   DDRF &= 0b10111111; 
-   ADMUX = 0x06;
-   ADCSRA = 0xA7;
+    timer0_count = 0;
+    timer2_count = 0;
+    stop_interrupt = 0;
+    seconds = 0;
 
-   ADCSRA |= 0x40;
+    PORTE = 0b00001000;
+    PORTD = 0;
 
-   sei(); // 인터럽트 활성화
+    EICRA = 0b11000000;
+    EIMSK = 0x08;
 
-   while (1){ // 아래 구문을 무한 반복합니다.
+    DDRF &= 0b10111111;
+    ADMUX = 0x06;
+    ADCSRA = 0xA7;
+    ADCSRA |= 0x40;
 
-      if(result < th) {
-	      
-	      Close = 0; 
-	      stop(); 
-	      stopsign();
-      }
-      else {
-	      
-              Close = 1;
-              DDRD |= 0b00000100;
-	      
-//-------------------------------------------------------------------------------
-	      
-              if (PIND & 0b00000001) 
-	           {PORTE &= 240; PORTE |= (1 << PE0);}
+    sei();
 
-              else if (PIND & 0b00000010) 
-	           {PORTE &= 240; PORTE |= (2 << PE0);}
+    while(1)
+    {
+        if(adc_result < adc_threshold)
+        {
+            is_enabled = 0;
+            stop();
+            stopsign();
+        }
+        else
+        {
+            is_enabled = 1;
+            DDRD |= 0b00000100;
 
-              else if (PIND & 0b00000100) 
-	           {PORTE &= 240; PORTE |= (4 << PE0);}
+            if(PIND & 0b00000001)
+            {
+                PORTE &= 240;
+                PORTE |= (1 << PE0);
+            }
+            else if(PIND & 0b00000010)
+            {
+                PORTE &= 240;
+                PORTE |= (2 << PE0);
+            }
+            else if(PIND & 0b00000100)
+            {
+                PORTE &= 240;
+                PORTE |= (4 << PE0);
+            }
 
-//-------------------------------------------------------------------------------
-	      
-              if (PINE & 0b00000001) 
-	           {TIMSK=0x41; PORTC= ~0x08; PORTA = 0x06; mode1();}
+            if(PINE & 0b00000001)
+            {
+                TIMSK = 0x41;
+                PORTC = ~0x08;
+                PORTA = 0x06;
+                mode1();
+            }
+            else if(PINE & 0b00000010)
+            {
+                TIMSK = 0x41;
+                PORTC = ~0x08;
+                PORTA = 0x5B;
+                mode2();
+            }
+            else if(PINE & 0b00000100)
+            {
+                TIMSK = 0x41;
+                PORTC = ~0x08;
+                PORTA = 0x4F;
+                mode3();
+            }
 
-              else if (PINE & 0b00000010) 
-	           {TIMSK=0x41; PORTC= ~0x08; PORTA = 0x5B; mode2();}
+            if(PINE & 0b00001000)
+            {
+                stop();
+                stopsign();
+            }
+        }
+    }
 
-              else if (PINE & 0b00000100) 
-	           {TIMSK=0x41; PORTC= ~0x08; PORTA = 0x4F; mode3();}
-
-//-------------------------------------------------------------------------------
-
-              if (PINE & 0b00001000) {stop(); stopsign();}
-          }                                                          
-      }
-return 0;    // main함수에 0을 리턴합니다.
+    return 0;
 }
